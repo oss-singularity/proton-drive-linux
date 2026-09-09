@@ -361,6 +361,7 @@ assert "MiB/s" in window.download_speed_card.value.get_text()
 assert window.download_speed_card.detail.get_text() == "Includes Proton API replies"
 assert window.upload_graph_detail.get_text().endswith("every 2s")
 assert window.download_graph_detail.get_text() == window.upload_graph_detail.get_text()
+assert window.capacity_refresh_interval_seconds() == 300
 assert window.speed_graph.axis_labels[0].get_text().endswith("/s")
 assert window.speed_graph.axis_labels[1].get_text().endswith("/s")
 assert window.speed_graph.axis_labels[2].get_text() == "0 B/s"
@@ -418,7 +419,7 @@ failed_capacity_state["remote_capacity"] = {
     "free_bytes": 0,
     "error": "Capacity data is unavailable",
 }
-window.capacity_refresh_due = time.monotonic() + 15 * 60
+window.capacity_refresh_due = time.monotonic() + window.capacity_refresh_interval_seconds()
 retry_started = time.monotonic()
 window.apply_state(failed_capacity_state, True)
 assert not window.remote_capacity.get("available")
