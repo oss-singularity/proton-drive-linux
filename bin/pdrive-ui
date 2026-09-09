@@ -60,7 +60,7 @@ PLATFORM_ADAPTER = load_platform_adapter()
 
 
 APP_ID = "io.github.claudiuschuster.PDriveControl"
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 REFRESH_INTERVAL_SECONDS = 2
 REFRESH_INTERVAL_OPTIONS = (1, 2, 5, 10)
 GRAPH_WINDOW_SECONDS = 5 * 60
@@ -1843,6 +1843,9 @@ class StorageCard(Gtk.EventBox):
                     total=human_bytes(remote.get("total_bytes", 0)),
                 )
             )
+        elif remote:
+            self.remote_value.set_text("–")
+            self.remote_detail.set_text(translate("Proton cloud capacity unavailable"))
         else:
             self.remote_value.set_text("–")
             self.remote_detail.set_text(translate("Refreshing cloud capacity …"))
@@ -4937,7 +4940,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
             if completed.returncode != 0:
                 raise RuntimeError(completed.stderr.strip() or f"pdrive-state exited with {completed.returncode}")
             payload = json.loads(completed.stdout)
-            GLib.idle_add(self.apply_state, payload)
+            GLib.idle_add(self.apply_state, payload, include_capacity)
         except (
             OSError,
             subprocess.TimeoutExpired,
@@ -4953,7 +4956,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
         self.update_status("critical", "Status unavailable", message)
         return GLib.SOURCE_REMOVE
 
-    def apply_state(self, state: dict[str, Any]) -> bool:
+    def apply_state(self, state: dict[str, Any], included_capacity: bool = False) -> bool:
         self.refreshing = False
         self.current_state = state
         health = state.get("health", {})
@@ -4969,6 +4972,9 @@ class PDriveWindow(Gtk.ApplicationWindow):
         remote_capacity = state.get("remote_capacity", {})
         if isinstance(remote_capacity, dict) and remote_capacity.get("available"):
             self.remote_capacity = remote_capacity
+        elif included_capacity:
+            self.remote_capacity = remote_capacity if isinstance(remote_capacity, dict) else {}
+            self.capacity_refresh_due = min(self.capacity_refresh_due, time.monotonic() + 30)
 
         status = str(health.get("status", "unknown"))
         self.updated_label.set_text(dt.datetime.now().strftime("%H:%M:%S"))

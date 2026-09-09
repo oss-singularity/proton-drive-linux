@@ -83,7 +83,7 @@ if command -v desktop-file-validate >/dev/null 2>&1; then
         "${project_dir}/share/applications/io.github.claudiuschuster.PDriveControl.desktop"
 fi
 
-if grep -RInE --exclude-dir=.git --exclude=check.sh \
+if grep -RInE --exclude-dir=.git --exclude=.git --exclude=check.sh \
     '(/home/claudiu|claudiu@envy|mail@claudiuschuster|RCLONE_ENCRYPT_V0)' \
     "${project_dir}"; then
     printf 'Deployment-specific or sensitive material found.\n' >&2
@@ -103,7 +103,7 @@ legacy_project_routes=(
     'img.shields.io/github/v/release/ClaudiuSchuster/proton-drive-linux'
 )
 for legacy_route in "${legacy_project_routes[@]}"; do
-    if grep -RInF --exclude-dir=.git --exclude=check.sh -- "${legacy_route}" "${project_dir}"; then
+    if grep -RInF --exclude-dir=.git --exclude=.git --exclude=check.sh -- "${legacy_route}" "${project_dir}"; then
         printf 'Legacy pre-organization project route found: %s\n' "${legacy_route}" >&2
         exit 1
     fi
