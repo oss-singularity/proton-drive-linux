@@ -28,6 +28,7 @@ assert module.load_preferences() == {
     "start_in_tray": False,
     "poll_in_background": False,
     "refresh_interval_seconds": 2,
+    "capacity_refresh_interval_seconds": 300,
     "notification_policy": "important",
     "language": "en",
     "issues_reviewed_errors": -1,
@@ -68,6 +69,8 @@ assert module.translate(
 ).startswith("Fabian Schneider — Quatschkomödie")
 assert module.translate("Keep running in the tray when the window closes").startswith("Beim Schließen")
 assert module.translate("Keep live metrics updating while hidden in the tray").startswith("Live-Metriken")
+assert module.translate("Cloud capacity interval") == "Intervall des Cloud-Speicherplatzes"
+assert module.translate_format("{minutes} minutes", minutes=5) == "5 Minuten"
 assert module.translate("Change Proton account …") == "Proton-Konto wechseln …"
 assert module.translate("Previous account restored") == "Vorheriges Konto wiederhergestellt"
 module.CURRENT_LANGUAGE = "en"
@@ -135,6 +138,7 @@ module.atomic_write(
             "start_in_tray": True,
             "poll_in_background": True,
             "refresh_interval_seconds": 5,
+            "capacity_refresh_interval_seconds": 900,
             "notification_policy": "critical",
             "language": "de",
             "issues_reviewed_errors": 40,
@@ -149,6 +153,7 @@ assert module.load_preferences() == {
     "start_in_tray": True,
     "poll_in_background": True,
     "refresh_interval_seconds": 5,
+    "capacity_refresh_interval_seconds": 900,
     "notification_policy": "critical",
     "language": "de",
     "issues_reviewed_errors": 40,
@@ -375,13 +380,30 @@ assert "off/0" in module.bandwidth_slider_label(module.BANDWIDTH_SLIDER_UNLIMITE
 assert module.argument_parser().parse_args(["--demo", "--demo-page", "history"]).demo_page == "history"
 
 application = module.PDriveApplication()
-assert application.update_preferences(False, False, False, 10, "all", "en") is None
+
+
+class Window:
+    capacity_refresh_due = 123.0
+    refresh_requested = False
+
+    def schedule_dashboard_timer(self):
+        pass
+
+    def request_refresh(self):
+        self.refresh_requested = True
+
+
+application.window = Window()
+assert application.update_preferences(False, False, False, 10, 1800, "all", "en") is None
 updated = module.load_preferences()
 assert updated["poll_in_background"] is False
 assert updated["refresh_interval_seconds"] == 10
+assert updated["capacity_refresh_interval_seconds"] == 1800
 assert updated["notification_policy"] == "all"
 assert updated["issues_reviewed_errors"] == 40
 assert updated["issues_reviewed_notices"] == 9
+assert application.window.capacity_refresh_due == 0.0
+assert application.window.refresh_requested is True
 assert updated["issues_reviewed_at"] == "2026-08-24T12:00:00+02:00"
 assert application.mark_issues_reviewed(
     {

@@ -60,9 +60,11 @@ PLATFORM_ADAPTER = load_platform_adapter()
 
 
 APP_ID = "io.github.claudiuschuster.PDriveControl"
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 REFRESH_INTERVAL_SECONDS = 2
 REFRESH_INTERVAL_OPTIONS = (1, 2, 5, 10)
+CAPACITY_REFRESH_INTERVAL_SECONDS = 5 * 60
+CAPACITY_REFRESH_INTERVAL_OPTIONS = (5 * 60, 15 * 60, 30 * 60, 60 * 60)
 GRAPH_WINDOW_SECONDS = 5 * 60
 BANDWIDTH_SLIDER_MAX_RATE = 100.0
 BANDWIDTH_SLIDER_UNLIMITED = 110.0
@@ -114,6 +116,7 @@ DEFAULT_PREFERENCES: dict[str, Any] = {
     "start_in_tray": False,
     "poll_in_background": False,
     "refresh_interval_seconds": REFRESH_INTERVAL_SECONDS,
+    "capacity_refresh_interval_seconds": CAPACITY_REFRESH_INTERVAL_SECONDS,
     "notification_policy": "important",
     "language": "en",
     "issues_reviewed_errors": -1,
@@ -454,6 +457,8 @@ GERMAN_TRANSLATIONS = {
     "The independent watchdog applies this policy even while the Control Center is closed.": "Der unabhängige Watchdog wendet diese Auswahl auch bei geschlossenem Control Center an.",
     "Live metrics interval": "Intervall der Live-Metriken",
     "{seconds} seconds": "{seconds} Sekunden",
+    "Cloud capacity interval": "Intervall des Cloud-Speicherplatzes",
+    "{minutes} minutes": "{minutes} Minuten",
     "Language": "Sprache",
     "Language changes take effect after restarting PDrive Control Center.": "Sprachänderungen gelten nach einem Neustart des PDrive Control Centers.",
     "Session startup uses ~/.config/autostart. A manual launch from the application menu still opens the window visibly.": "Der Sitzungsstart verwendet ~/.config/autostart. Ein manueller Start aus dem Anwendungsmenü öffnet das Fenster weiterhin sichtbar.",
@@ -820,6 +825,8 @@ def load_preferences() -> dict[str, Any]:
                 preferences[key] = payload[key]
         if payload.get("refresh_interval_seconds") in REFRESH_INTERVAL_OPTIONS:
             preferences["refresh_interval_seconds"] = payload["refresh_interval_seconds"]
+        if payload.get("capacity_refresh_interval_seconds") in CAPACITY_REFRESH_INTERVAL_OPTIONS:
+            preferences["capacity_refresh_interval_seconds"] = payload["capacity_refresh_interval_seconds"]
         if payload.get("notification_policy") in NOTIFICATION_POLICIES:
             preferences["notification_policy"] = payload["notification_policy"]
         if payload.get("language") in SUPPORTED_LANGUAGES:
@@ -1843,6 +1850,9 @@ class StorageCard(Gtk.EventBox):
                     total=human_bytes(remote.get("total_bytes", 0)),
                 )
             )
+        elif remote:
+            self.remote_value.set_text("–")
+            self.remote_detail.set_text(translate("Proton cloud capacity unavailable"))
         else:
             self.remote_value.set_text("–")
             self.remote_detail.set_text(translate("Refreshing cloud capacity …"))
@@ -4763,6 +4773,17 @@ class PDriveWindow(Gtk.ApplicationWindow):
                 return int(interval)
         return REFRESH_INTERVAL_SECONDS
 
+    def capacity_refresh_interval_seconds(self) -> int:
+        application = self.get_application()
+        if isinstance(application, PDriveApplication):
+            interval = application.preferences.get(
+                "capacity_refresh_interval_seconds",
+                CAPACITY_REFRESH_INTERVAL_SECONDS,
+            )
+            if interval in CAPACITY_REFRESH_INTERVAL_OPTIONS:
+                return int(interval)
+        return CAPACITY_REFRESH_INTERVAL_SECONDS
+
     def schedule_dashboard_timer(self) -> None:
         if self.dashboard_timer_id:
             GLib.source_remove(self.dashboard_timer_id)
@@ -4913,7 +4934,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
         self.refreshing = True
         include_capacity = force_capacity or time.monotonic() >= self.capacity_refresh_due
         if include_capacity and not self.demo:
-            self.capacity_refresh_due = time.monotonic() + 15 * 60
+            self.capacity_refresh_due = time.monotonic() + self.capacity_refresh_interval_seconds()
         thread = threading.Thread(target=self.load_state, args=(include_capacity,), daemon=True)
         thread.start()
 
@@ -4937,7 +4958,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
             if completed.returncode != 0:
                 raise RuntimeError(completed.stderr.strip() or f"pdrive-state exited with {completed.returncode}")
             payload = json.loads(completed.stdout)
-            GLib.idle_add(self.apply_state, payload)
+            GLib.idle_add(self.apply_state, payload, include_capacity)
         except (
             OSError,
             subprocess.TimeoutExpired,
@@ -4953,7 +4974,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
         self.update_status("critical", "Status unavailable", message)
         return GLib.SOURCE_REMOVE
 
-    def apply_state(self, state: dict[str, Any]) -> bool:
+    def apply_state(self, state: dict[str, Any], included_capacity: bool = False) -> bool:
         self.refreshing = False
         self.current_state = state
         health = state.get("health", {})
@@ -4969,6 +4990,9 @@ class PDriveWindow(Gtk.ApplicationWindow):
         remote_capacity = state.get("remote_capacity", {})
         if isinstance(remote_capacity, dict) and remote_capacity.get("available"):
             self.remote_capacity = remote_capacity
+        elif included_capacity:
+            self.remote_capacity = remote_capacity if isinstance(remote_capacity, dict) else {}
+            self.capacity_refresh_due = min(self.capacity_refresh_due, time.monotonic() + 30)
 
         status = str(health.get("status", "unknown"))
         self.updated_label.set_text(dt.datetime.now().strftime("%H:%M:%S"))
@@ -6106,6 +6130,17 @@ class PDriveWindow(Gtk.ApplicationWindow):
         interval_combo.set_active_id(str(application.preferences["refresh_interval_seconds"]))
         interval_row.pack_end(interval_combo, False, False, 0)
         content.pack_start(interval_row, False, False, 0)
+        capacity_interval_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        capacity_interval_row.pack_start(label("Cloud capacity interval"), True, True, 0)
+        capacity_interval_combo = Gtk.ComboBoxText()
+        for seconds in CAPACITY_REFRESH_INTERVAL_OPTIONS:
+            capacity_interval_combo.append(
+                str(seconds),
+                translate_format("{minutes} minutes", minutes=seconds // 60),
+            )
+        capacity_interval_combo.set_active_id(str(application.preferences["capacity_refresh_interval_seconds"]))
+        capacity_interval_row.pack_end(capacity_interval_combo, False, False, 0)
+        content.pack_start(capacity_interval_row, False, False, 0)
         language_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         language_row.pack_start(label("Language"), True, True, 0)
         language_combo = Gtk.ComboBoxText()
@@ -6154,6 +6189,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
             start_toggle.get_active(),
             background_poll_toggle.get_active(),
             int(interval_combo.get_active_id() or REFRESH_INTERVAL_SECONDS),
+            int(capacity_interval_combo.get_active_id() or CAPACITY_REFRESH_INTERVAL_SECONDS),
             notification_combo.get_active_id() or "important",
             language_combo.get_active_id() or "en",
         )
@@ -6165,6 +6201,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
                 start_toggle.get_active(),
                 background_poll_toggle.get_active(),
                 int(interval_combo.get_active_id() or REFRESH_INTERVAL_SECONDS),
+                int(capacity_interval_combo.get_active_id() or CAPACITY_REFRESH_INTERVAL_SECONDS),
                 notification_combo.get_active_id() or "important",
                 language_combo.get_active_id() or "en",
             )
@@ -6179,6 +6216,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
             toggle.connect("toggled", update_save_sensitivity)
         language_combo.connect("changed", update_save_sensitivity)
         interval_combo.connect("changed", update_save_sensitivity)
+        capacity_interval_combo.connect("changed", update_save_sensitivity)
         notification_combo.connect("changed", update_save_sensitivity)
         save_button.set_sensitive(False)
         dialog.show_all()
@@ -6189,6 +6227,9 @@ class PDriveWindow(Gtk.ApplicationWindow):
         start_in_tray = start_toggle.get_active()
         poll_in_background = background_poll_toggle.get_active()
         refresh_interval_seconds = int(interval_combo.get_active_id() or REFRESH_INTERVAL_SECONDS)
+        capacity_refresh_interval_seconds = int(
+            capacity_interval_combo.get_active_id() or CAPACITY_REFRESH_INTERVAL_SECONDS
+        )
         notification_policy = notification_combo.get_active_id() or "important"
         selected_language = language_combo.get_active_id() or "en"
         previous_language = str(application.preferences["language"])
@@ -6203,6 +6244,7 @@ class PDriveWindow(Gtk.ApplicationWindow):
             start_in_tray,
             poll_in_background,
             refresh_interval_seconds,
+            capacity_refresh_interval_seconds,
             notification_policy,
             selected_language,
         )
@@ -6742,6 +6784,7 @@ class PDriveApplication(Gtk.Application):
         start_in_tray: bool,
         poll_in_background: bool,
         refresh_interval_seconds: int,
+        capacity_refresh_interval_seconds: int,
         notification_policy: str,
         language: str,
     ) -> str | None:
@@ -6758,6 +6801,11 @@ class PDriveApplication(Gtk.Application):
                     if refresh_interval_seconds in REFRESH_INTERVAL_OPTIONS
                     else REFRESH_INTERVAL_SECONDS
                 ),
+                "capacity_refresh_interval_seconds": (
+                    capacity_refresh_interval_seconds
+                    if capacity_refresh_interval_seconds in CAPACITY_REFRESH_INTERVAL_OPTIONS
+                    else CAPACITY_REFRESH_INTERVAL_SECONDS
+                ),
                 "notification_policy": (
                     notification_policy if notification_policy in NOTIFICATION_POLICIES else "important"
                 ),
@@ -6765,6 +6813,9 @@ class PDriveApplication(Gtk.Application):
             }
         )
         old_preferences = dict(self.preferences)
+        capacity_interval_changed = (
+            new_preferences["capacity_refresh_interval_seconds"] != old_preferences["capacity_refresh_interval_seconds"]
+        )
         try:
             self.sync_autostart(new_preferences["start_in_tray"])
             atomic_write(
@@ -6783,6 +6834,9 @@ class PDriveApplication(Gtk.Application):
         self.configure_tray()
         if self.window is not None:
             self.window.schedule_dashboard_timer()
+            if capacity_interval_changed:
+                self.window.capacity_refresh_due = 0.0
+                self.window.request_refresh()
         return None
 
     def mark_issues_reviewed(self, state: dict[str, Any]) -> str | None:

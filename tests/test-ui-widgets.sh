@@ -361,6 +361,7 @@ assert "MiB/s" in window.download_speed_card.value.get_text()
 assert window.download_speed_card.detail.get_text() == "Includes Proton API replies"
 assert window.upload_graph_detail.get_text().endswith("every 2s")
 assert window.download_graph_detail.get_text() == window.upload_graph_detail.get_text()
+assert window.capacity_refresh_interval_seconds() == 300
 assert window.speed_graph.axis_labels[0].get_text().endswith("/s")
 assert window.speed_graph.axis_labels[1].get_text().endswith("/s")
 assert window.speed_graph.axis_labels[2].get_text() == "0 B/s"
@@ -409,6 +410,38 @@ assert "VFS cache used" in window.capacity_card.local_detail.get_text()
 assert "pending upload" in window.cache_card.detail.get_text()
 assert "≈" in window.queue_card.detail.get_text()
 assert "calculating" not in window.queue_card.detail.get_text()
+
+failed_capacity_state = copy.deepcopy(module.demo_state())
+failed_capacity_state["remote_capacity"] = {
+    "available": False,
+    "total_bytes": 0,
+    "used_bytes": 0,
+    "free_bytes": 0,
+    "error": "Capacity data is unavailable",
+}
+window.capacity_refresh_due = time.monotonic() + window.capacity_refresh_interval_seconds()
+retry_started = time.monotonic()
+window.apply_state(failed_capacity_state, True)
+assert not window.remote_capacity.get("available")
+assert window.capacity_card.remote_value.get_text() == "–"
+assert window.capacity_card.remote_detail.get_text() == "Proton cloud capacity unavailable"
+assert retry_started < window.capacity_refresh_due <= retry_started + 31
+
+non_capacity_state = copy.deepcopy(module.demo_state())
+non_capacity_state["remote_capacity"] = {
+    "available": False,
+    "total_bytes": 0,
+    "used_bytes": 0,
+    "free_bytes": 0,
+    "error": "",
+}
+window.apply_state(non_capacity_state)
+assert window.capacity_card.remote_detail.get_text() == "Proton cloud capacity unavailable"
+
+window.apply_state(module.demo_state(), True)
+assert window.remote_capacity.get("available")
+assert "free" in window.capacity_card.remote_value.get_text()
+assert "used" in window.capacity_card.remote_detail.get_text()
 
 finalizing_state = copy.deepcopy(module.demo_state())
 finalizing_active = finalizing_state["transfers"]["active"][0]
